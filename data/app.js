@@ -173,14 +173,14 @@ function readAlarmDialog() {
   };
 }
 
-function populateAudioSelects() {
+function populateAudioSelects(selectedLocal, selectedFallback) {
   const opts = ["/audio/default.wav", ...filesCache.map(f => f.path || f.name).filter(Boolean)];
   const normalized = opts.map(p => p.startsWith("/audio/") ? p : `/audio/${p.replace(/^\/+/, "")}`);
   const sel1 = document.getElementById("aLocalPath");
   const sel2 = document.getElementById("aFallback");
-  [sel1, sel2].forEach(sel => {
+  [sel1, sel2].forEach((sel, idx) => {
     if (!sel) return;
-    const current = sel.value;
+    const wanted = idx === 0 ? selectedLocal : selectedFallback;
     sel.innerHTML = "";
     normalized.forEach(p => {
       const opt = document.createElement("option");
@@ -188,13 +188,15 @@ function populateAudioSelects() {
       opt.textContent = p;
       sel.appendChild(opt);
     });
-    if (current) sel.value = current;
+    if (wanted && normalized.includes(wanted)) sel.value = wanted;
+    else sel.value = "/audio/default.wav";
   });
 }
 
 function openAlarmDialog(alarm) {
   fillAlarmDialog(alarm);
-  populateAudioSelects();
+  const as = alarm.audio_source || {};
+  populateAudioSelects(as.local_path || "/audio/default.wav", as.fallback_local_path || "/audio/default.wav");
   setText("dlgMsg", "");
   const dlg = document.getElementById("dlgAlarm");
   if (dlg && !dlg.open) dlg.showModal();
@@ -226,9 +228,14 @@ async function saveAlarm() {
     payload.audio_source.fallback_local_path = fix(payload.audio_source.fallback_local_path);
   }
   try {
-    if (!id) { setText("dlgMsg", "Ingen alarm-ID, välj ett befintligt eller skapa nytt via 'Nytt alarm'"); return; }
-    await apiJson("PUT", `/api/alarms/${id}`, payload);
-    setText("dlgMsg", "Sparat");
+    if (!id) {
+      const res = await apiJson("POST", "/api/alarms", payload);
+      setInputValue("alarmId", res.id || "");
+      setText("dlgMsg", "Skapat");
+    } else {
+      await apiJson("PUT", `/api/alarms/${id}`, payload);
+      setText("dlgMsg", "Sparat");
+    }
     await loadAlarms();
     await loadStatus();
   } catch (e) {
@@ -389,7 +396,8 @@ function bindUI() {
     const act = btn.getAttribute("data-act");
     try {
       if (act === "edit") {
-        const a = await apiJson("GET", `/api/alarms/${id}`);
+        let a = alarmsCache.find(x => String(x.id) === String(id));
+        if (!a) a = await apiJson("GET", `/api/alarms/${id}`);
         if (!a.id) a.id = id;
         openAlarmDialog(a);
       }
