@@ -96,6 +96,7 @@ function renderAlarmList(alarms) {
           <button class="btn" data-act="edit" data-id="${a.id}">Redigera</button>
           <button class="btn secondary" data-act="toggle" data-id="${a.id}">${a.enabled ? "Stäng av" : "Aktivera"}</button>
           <button class="btn secondary" data-act="fire" data-id="${a.id}">Ring nu</button>
+          <button class="btn danger" data-act="delete" data-id="${a.id}">Radera</button>
         </div>
       </div>`;
     list.appendChild(item);
@@ -174,13 +175,14 @@ function readAlarmDialog() {
 
 function populateAudioSelects() {
   const opts = ["/audio/default.wav", ...filesCache.map(f => f.path || f.name).filter(Boolean)];
+  const normalized = opts.map(p => p.startsWith("/audio/") ? p : `/audio/${p.replace(/^\/+/, "")}`);
   const sel1 = document.getElementById("aLocalPath");
   const sel2 = document.getElementById("aFallback");
   [sel1, sel2].forEach(sel => {
     if (!sel) return;
     const current = sel.value;
     sel.innerHTML = "";
-    opts.forEach(p => {
+    normalized.forEach(p => {
       const opt = document.createElement("option");
       opt.value = p;
       opt.textContent = p;
@@ -206,9 +208,10 @@ function closeAlarmDialog() {
 async function createAlarm() {
   try {
     const res = await apiJson("POST", "/api/alarms", { label: "Nytt alarm", enabled: false, hour: 7, minute: 30, days_bitmask: 0 });
+    let created = null;
+    try { created = await apiJson("GET", `/api/alarms/${res.id}`); } catch {}
     await loadAlarms();
-    const full = await apiJson("GET", `/api/alarms/${res.id}`);
-    openAlarmDialog(full);
+    openAlarmDialog(created || { id: res.id, label: "Nytt alarm", hour: 7, minute: 30, days_bitmask: 0, volume: 80, audio_source: { type: "local", local_path: "/audio/default.wav", fallback_local_path: "/audio/default.wav", url: "" } });
   } catch (e) {
     alert(`Fel vid skapande: ${e.message || e}`);
   }
@@ -216,11 +219,14 @@ async function createAlarm() {
 
 async function saveAlarm() {
   const { id, payload } = readAlarmDialog();
-  if (!id) {
-    setText("dlgMsg", "Ingen alarm-ID, välj ett alarm");
-    return;
+  // Normalisera ljudvägar när typ = local
+  if (payload.audio_source.type === "local") {
+    const fix = (p) => p && p.length ? (p.startsWith("/audio/") ? p : `/audio/${p.replace(/^\/+/, "")}`) : p;
+    payload.audio_source.local_path = fix(payload.audio_source.local_path);
+    payload.audio_source.fallback_local_path = fix(payload.audio_source.fallback_local_path);
   }
   try {
+    if (!id) { setText("dlgMsg", "Ingen alarm-ID, välj ett befintligt eller skapa nytt via 'Nytt alarm'"); return; }
     await apiJson("PUT", `/api/alarms/${id}`, payload);
     setText("dlgMsg", "Sparat");
     await loadAlarms();
@@ -236,6 +242,14 @@ async function toggleAlarm(id) {
   await apiJson("POST", `/api/alarms/${id}/${a.enabled ? "disable" : "enable"}`);
   await loadAlarms();
   await loadStatus();
+}
+
+async function deleteAlarm(id) {
+  if (!confirm("Radera alarmet?")) return;
+  await apiJson("DELETE", `/api/alarms/${id}`);
+  await loadAlarms();
+  await loadStatus();
+  closeAlarmDialog();
 }
 
 async function fireAlarm(id) {
@@ -376,10 +390,12 @@ function bindUI() {
     try {
       if (act === "edit") {
         const a = await apiJson("GET", `/api/alarms/${id}`);
+        if (!a.id) a.id = id;
         openAlarmDialog(a);
       }
       if (act === "toggle") await toggleAlarm(id);
       if (act === "fire") await fireAlarm(id);
+      if (act === "delete") await deleteAlarm(id);
     } catch (err) {
       alert(err.message || err);
     }
@@ -411,7 +427,12 @@ function bindUI() {
     dlg.querySelector("#btnTestAudio").onclick = async (e) => {
       e.preventDefault();
       const id = document.getElementById("alarmId").value.trim();
-      if (id) await testAlarmAudio(id);
+      if (!id) { setText("dlgMsg", "Inget alarm valt"); return; }
+      try {
+        await testAlarmAudio(id);
+      } catch (err) {
+        setText("dlgMsg", `Fel: ${err.message || err}`);
+      }
     };
     dlg.querySelector("#btnFireNow").onclick = async (e) => {
       e.preventDefault();

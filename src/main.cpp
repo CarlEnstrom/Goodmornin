@@ -1953,18 +1953,29 @@ server.on("/app.js", HTTP_GET, [](AsyncWebServerRequest* req) {
   server.onNotFound([](AsyncWebServerRequest* req) {
     String path = req->url();
 
+    // En enkel CORS/OPTIONS-svar för alla vägar
+    if (req->method() == HTTP_OPTIONS) {
+      AsyncWebServerResponse* r = req->beginResponse(204);
+      r->addHeader("Access-Control-Allow-Origin", "*");
+      r->addHeader("Access-Control-Allow-Methods", "GET,POST,PUT,DELETE,OPTIONS");
+      r->addHeader("Access-Control-Allow-Headers", "Content-Type,X-Admin-Token");
+      req->send(r);
+      return;
+    }
+
     // Dynamiska API-routes för alarm och webhooks
     if (path.startsWith("/api/alarms/")) {
       String rest = path.substring(strlen("/api/alarms/"));
       int slash = rest.indexOf('/');
       String idStr = (slash >= 0) ? rest.substring(0, slash) : rest;
       uint32_t id = (uint32_t)idStr.toInt();
-      String suffix = (slash >= 0) ? rest.substring(slash) : "";
+        String suffix = (slash >= 0) ? rest.substring(slash) : "";
 
       if (id != 0) {
         if (suffix.length() == 0 || suffix == "/") {
           if (req->method() == HTTP_GET) { handleGetAlarmById(req, id); return; }
           if (req->method() == HTTP_PUT) { handlePutAlarm(req, id); return; }
+          if (req->method() == HTTP_DELETE) { handleDeleteAlarm(req, id); return; }
         }
         if (suffix == "/enable" && req->method() == HTTP_POST) { handleEnableDisable(req, id, true); return; }
         if (suffix == "/disable" && req->method() == HTTP_POST) { handleEnableDisable(req, id, false); return; }
