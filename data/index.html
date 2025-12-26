@@ -1,0 +1,188 @@
+<!-- data/index.html -->
+<!doctype html>
+<html lang="sv">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width,initial-scale=1" />
+  <title>ESP32-C3 Alarmklocka</title>
+  <link rel="stylesheet" href="/style.css" />
+</head>
+<body>
+  <header class="top">
+    <div>
+      <div class="title">Alarmklocka</div>
+      <div class="sub" id="statusLine">Laddar status</div>
+    </div>
+    <div class="actions">
+      <button id="btnWifi" class="btn secondary">WiFi</button>
+      <button id="btnRefresh" class="btn">Uppdatera</button>
+    </div>
+  </header>
+
+  <main class="wrap">
+    <section class="card">
+      <div class="row">
+        <div>
+          <div class="h">System</div>
+          <div class="kv">
+            <div>Enhet</div><div id="devId">-</div>
+            <div>Tid</div><div id="nowIso">-</div>
+            <div>NTP</div><div id="ntp">-</div>
+            <div>IP</div><div id="ip">-</div>
+          </div>
+        </div>
+        <div>
+          <div class="h">Admin token</div>
+          <div class="small">Behövs för ändringar, upload, test.</div>
+          <input id="adminToken" placeholder="X-Admin-Token" />
+          <div class="row2">
+            <button id="btnSaveToken" class="btn">Spara</button>
+            <button id="btnClearToken" class="btn secondary">Rensa</button>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section class="card">
+      <div class="row">
+        <div class="h">Alarm</div>
+        <div class="row2">
+          <button id="btnNewAlarm" class="btn">Nytt alarm</button>
+        </div>
+      </div>
+      <div id="alarmList" class="list"></div>
+    </section>
+
+    <section class="card">
+      <div class="row">
+        <div class="h">Ljudfiler</div>
+        <div class="small">Rekommenderat: WAV mono 16 kHz 16-bit.</div>
+      </div>
+      <div class="row">
+        <input type="file" id="filePick" />
+        <button id="btnUpload" class="btn">Ladda upp</button>
+      </div>
+      <div class="row small" id="fsInfo">-</div>
+      <div id="fileList" class="list"></div>
+    </section>
+
+    <section class="card">
+      <div class="row">
+        <div class="h">System</div>
+        <div class="row2">
+          <button id="btnExport" class="btn secondary">Export config</button>
+          <button id="btnRestart" class="btn danger">Starta om</button>
+        </div>
+      </div>
+      <textarea id="exportBox" placeholder="Export JSON visas här" rows="8"></textarea>
+      <div class="row">
+        <button id="btnImport" class="btn">Import config</button>
+      </div>
+    </section>
+  </main>
+
+  <dialog id="dlgAlarm">
+    <form method="dialog" class="dlg">
+      <h3 id="dlgTitle">Alarm</h3>
+      <input type="hidden" id="alarmId" />
+
+      <label>Label</label>
+      <input id="aLabel" maxlength="31" />
+
+      <div class="grid2">
+        <div>
+          <label>Tid (HH:MM)</label>
+          <input id="aTime" placeholder="07:30" />
+        </div>
+        <div>
+          <label>Engångsdatum (YYYY-MM-DD)</label>
+          <input id="aOnce" placeholder="" />
+        </div>
+      </div>
+
+      <label>Veckodagar (bitmask Mon=1 ... Sun=64)</label>
+      <input id="aDays" placeholder="31 för mån-fre" />
+
+      <div class="grid2">
+        <div>
+          <label>Snooze (min)</label>
+          <input id="aSnooze" type="number" min="0" max="240" />
+        </div>
+        <div>
+          <label>GPIO knapp</label>
+          <input id="aGpio" type="number" min="-1" max="48" />
+        </div>
+      </div>
+
+      <div class="grid2">
+        <div>
+          <label>Long press (ms, 0=default)</label>
+          <input id="aLong" type="number" min="0" max="10000" />
+        </div>
+        <div>
+          <label>Volym (0-100)</label>
+          <input id="aVol" type="number" min="0" max="100" />
+        </div>
+      </div>
+
+      <label>Inbound webhook token</label>
+      <input id="aInToken" />
+
+      <div class="grid2">
+        <div>
+          <label>Audio type</label>
+          <select id="aAudioType">
+            <option value="local">local</option>
+            <option value="url">url</option>
+          </select>
+        </div>
+        <div>
+          <label>Local path</label>
+          <select id="aLocalPath"></select>
+        </div>
+      </div>
+
+      <label>URL</label>
+      <input id="aUrl" placeholder="https://..." />
+
+      <label>Fallback local path</label>
+      <select id="aFallback"></select>
+
+      <div class="grid2">
+        <div>
+          <label>Webhook on_set_url</label>
+          <input id="wSet" placeholder="https://..." />
+        </div>
+        <div>
+          <label>Webhook on_fire_url</label>
+          <input id="wFire" placeholder="https://..." />
+        </div>
+      </div>
+      <div class="grid2">
+        <div>
+          <label>Webhook on_snooze_url</label>
+          <input id="wSnooze" placeholder="https://..." />
+        </div>
+        <div>
+          <label>Webhook on_dismiss_url</label>
+          <input id="wDismiss" placeholder="https://..." />
+        </div>
+      </div>
+
+      <div class="row2">
+        <button id="btnTestAudio" class="btn secondary" value="noop">Testa ljud</button>
+        <button id="btnFireNow" class="btn secondary" value="noop">Fire now</button>
+      </div>
+
+      <menu class="menu">
+        <button id="btnCancel" class="btn secondary">Avbryt</button>
+        <button id="btnSave" class="btn">Spara</button>
+      </menu>
+
+      <div class="small" id="dlgMsg"></div>
+    </form>
+  </dialog>
+
+  <script src="/app.js"></script>
+</body>
+</html>
