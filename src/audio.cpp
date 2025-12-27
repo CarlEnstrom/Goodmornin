@@ -409,7 +409,13 @@ bool playAlarmAudioWithFallback(const AlarmConfig& a) {
 
   auto tryLocal = [&](const String& p) -> bool {
     if (p.length() == 0) return false;
-    bool ok = audio.playLocal(p, a.volume);
+    String path = p;
+    if (!path.startsWith("/")) {
+      String candidate = "/audio/" + path;
+      if (LittleFS.exists(candidate)) path = candidate;
+      else path = "/" + path;
+    }
+    bool ok = audio.playLocal(path, a.volume);
     if (!ok) lastAudioError = audio.lastError();
     return ok;
   };

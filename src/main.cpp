@@ -987,8 +987,12 @@ static void handleFilesList(AsyncWebServerRequest* req) {
     while (f) {
       if (!f.isDirectory()) {
         JsonObject o = arr.add<JsonObject>();
-        o["name"] = String(f.name()).substring(String("/audio/").length());
-        o["path"] = String(f.name());
+        String fname = f.name();
+        String name = fname;
+        int slash = name.lastIndexOf('/');
+        if (slash >= 0 && slash + 1 < name.length()) name = name.substring(slash + 1);
+        o["name"] = name;
+        o["path"] = fname.startsWith("/") ? fname : (String("/audio/") + fname);
         o["size"] = (int64_t)f.size();
       }
       f = root.openNextFile();
@@ -1384,8 +1388,59 @@ server.on("/app.js", HTTP_GET, [](AsyncWebServerRequest* req) {
 
   server.on("/api/system/restart", HTTP_POST, handleRestart);
 
+  // Dynamiska alarm-routes (/api/alarms/{id}/...)
+  class AlarmRouteHandler : public AsyncWebHandler {
+  public:
+    bool canHandle(AsyncWebServerRequest* req) const override {
+      // Snabbfiltrera bort allt som inte är /api/alarms/...
+      if (!req || !req->url().startsWith("/api/alarms/")) return false;
+      return req->method() != HTTP_OPTIONS;
+    }
+    bool isRequestHandlerTrivial() const override { return false; }
+    void handleRequest(AsyncWebServerRequest* req) override {
+      if (!req) return;
+      String path = req->url();
+      Serial.printf("[alarms] %s %s\n",
+                    req->method() == HTTP_GET ? "GET" :
+                    req->method() == HTTP_POST ? "POST" :
+                    req->method() == HTTP_PUT ? "PUT" :
+                    req->method() == HTTP_DELETE ? "DELETE" :
+                    req->method() == HTTP_PATCH ? "PATCH" :
+                    req->method() == HTTP_OPTIONS ? "OPTIONS" : "OTHER",
+                    path.c_str());
+      String rest = path.substring(strlen("/api/alarms/"));
+      int slash = rest.indexOf('/');
+      String idStr = (slash >= 0) ? rest.substring(0, slash) : rest;
+      uint32_t id = (uint32_t)idStr.toInt();
+      String suffix = (slash >= 0) ? rest.substring(slash) : "";
+
+      if (id == 0) { req->send(404, "application/json", "{\"error\":\"bad_id\"}"); return; }
+
+      if (suffix.length() == 0 || suffix == "/") {
+        if (req->method() == HTTP_GET) { handleGetAlarmById(req, id); return; }
+        if (req->method() == HTTP_PUT) { handlePutAlarm(req, id); return; }
+        if (req->method() == HTTP_DELETE) { handleDeleteAlarm(req, id); return; }
+      }
+      if (suffix == "/enable" && req->method() == HTTP_POST) { handleEnableDisable(req, id, true); return; }
+      if (suffix == "/disable" && req->method() == HTTP_POST) { handleEnableDisable(req, id, false); return; }
+      if (suffix == "/snooze" && req->method() == HTTP_POST) { handleSnoozeDismissFire(req, id, "snooze"); return; }
+      if (suffix == "/dismiss" && req->method() == HTTP_POST) { handleSnoozeDismissFire(req, id, "dismiss"); return; }
+      if (suffix == "/fire" && req->method() == HTTP_POST) { handleSnoozeDismissFire(req, id, "fire"); return; }
+      if (suffix == "/test_audio" && req->method() == HTTP_POST) { handleTestAudio(req, id); return; }
+
+      req->send(404, "application/json", "{\"error\":\"not_found\"}");
+    }
+  };
+  server.addHandler(new AlarmRouteHandler());
+
   server.onNotFound([](AsyncWebServerRequest* req) {
     String path = req->url();
+    Serial.printf("[onNotFound] %s %s\n", req->method() == HTTP_GET ? "GET" :
+                                       req->method() == HTTP_POST ? "POST" :
+                                       req->method() == HTTP_PUT ? "PUT" :
+                                       req->method() == HTTP_DELETE ? "DELETE" :
+                                       req->method() == HTTP_OPTIONS ? "OPTIONS" : "OTHER",
+                                       path.c_str());
 
     // En enkel CORS/OPTIONS-svar för alla vägar
     if (req->method() == HTTP_OPTIONS) {
@@ -1403,7 +1458,7 @@ server.on("/app.js", HTTP_GET, [](AsyncWebServerRequest* req) {
       int slash = rest.indexOf('/');
       String idStr = (slash >= 0) ? rest.substring(0, slash) : rest;
       uint32_t id = (uint32_t)idStr.toInt();
-        String suffix = (slash >= 0) ? rest.substring(slash) : "";
+      String suffix = (slash >= 0) ? rest.substring(slash) : "";
 
       if (id != 0) {
         if (suffix.length() == 0 || suffix == "/") {
@@ -1451,6 +1506,7 @@ server.on("/app.js", HTTP_GET, [](AsyncWebServerRequest* req) {
 void setup() {
   Serial.begin(115200);
   delay(150);
+  Serial.println("\n[boot] starting");
 
   deviceId = "esp32c3-" + chipIdHex().substring(0, 12);
 
@@ -1471,6 +1527,7 @@ void setup() {
   startWiFiFlow();
 
   if (wifiConnected) {
+    Serial.printf("[boot] WiFi STA connected IP=%s\n", WiFi.localIP().toString().c_str());
     startNtp();
 
     // Vänta in första synken lite mer robust än 200ms
@@ -1496,12 +1553,15 @@ void setup() {
   } else {
     // AP mode: time may be invalid, but UI+API still works
     ntpSynced = false;
+    Serial.println("[boot] WiFi AP mode");
   }
 
   setupServer();
+  Serial.println("[boot] server ready");
 
   Serial.printf("Device: %s\n", deviceId.c_str());
   Serial.printf("Admin token set: %s\n", adminToken.length() ? "yes" : "no");
+  Serial.println("[boot] ready");
 }
 
 void loop() {
