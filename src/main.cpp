@@ -603,8 +603,11 @@ static void buttonTick() {
   }
 }
 
+static void handlePutAlarm(AsyncWebServerRequest* req, uint32_t id);
+
 /* JSON body collector */
 static std::map<AsyncWebServerRequest*, std::vector<uint8_t>> gBody;
+static std::map<AsyncWebServerRequest*, uint32_t> gPendingAlarmPut;
 
 static void attachJsonBodyCollector() {
   server.onRequestBody([](AsyncWebServerRequest* request, uint8_t* data, size_t len, size_t index, size_t total) {
@@ -623,6 +626,15 @@ static void attachJsonBodyCollector() {
     }
 
     buf.insert(buf.end(), data, data + len);
+
+    if (index + len == total) {
+      auto pending = gPendingAlarmPut.find(request);
+      if (pending != gPendingAlarmPut.end()) {
+        uint32_t id = pending->second;
+        gPendingAlarmPut.erase(pending);
+        handlePutAlarm(request, id);
+      }
+    }
   });
 }
 
@@ -1460,7 +1472,20 @@ server.on("/app.js", HTTP_GET, [](AsyncWebServerRequest* req) {
 
       if (suffix.length() == 0 || suffix == "/") {
         if (req->method() == HTTP_GET) { handleGetAlarmById(req, id); return; }
-        if (req->method() == HTTP_PUT) { handlePutAlarm(req, id); return; }
+        if (req->method() == HTTP_PUT) {
+          size_t len = req->contentLength();
+          if (len > 0) {
+            auto it = gBody.find(req);
+            if (it != gBody.end() && it->second.size() == len) {
+              handlePutAlarm(req, id);
+            } else {
+              gPendingAlarmPut[req] = id;
+            }
+            return;
+          }
+          handlePutAlarm(req, id);
+          return;
+        }
         if (req->method() == HTTP_DELETE) { handleDeleteAlarm(req, id); return; }
       }
       if (suffix == "/enable" && req->method() == HTTP_POST) { handleEnableDisable(req, id, true); return; }
@@ -1506,7 +1531,20 @@ server.on("/app.js", HTTP_GET, [](AsyncWebServerRequest* req) {
       if (id != 0) {
         if (suffix.length() == 0 || suffix == "/") {
           if (req->method() == HTTP_GET) { handleGetAlarmById(req, id); return; }
-          if (req->method() == HTTP_PUT) { handlePutAlarm(req, id); return; }
+          if (req->method() == HTTP_PUT) {
+            size_t len = req->contentLength();
+            if (len > 0) {
+              auto it = gBody.find(req);
+              if (it != gBody.end() && it->second.size() == len) {
+                handlePutAlarm(req, id);
+              } else {
+                gPendingAlarmPut[req] = id;
+              }
+              return;
+            }
+            handlePutAlarm(req, id);
+            return;
+          }
           if (req->method() == HTTP_DELETE) { handleDeleteAlarm(req, id); return; }
         }
         if (suffix == "/enable" && req->method() == HTTP_POST) { handleEnableDisable(req, id, true); return; }
