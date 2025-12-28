@@ -32,6 +32,11 @@ function setInputValue(id, value) {
   if (el) el.value = value ?? "";
 }
 
+function setPreText(id, text) {
+  const el = document.getElementById(id);
+  if (el) el.textContent = text ?? "";
+}
+
 function escapeHtml(s) {
   return String(s ?? "").replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", "\"": "&quot;", "'": "&#039;" }[c]));
 }
@@ -333,6 +338,15 @@ async function uploadFile() {
   await loadStatus();
 }
 
+async function loadLogs() {
+  try {
+    const logs = await apiJson("GET", "/api/logs");
+    setPreText("logBox", (logs || []).join("\n"));
+  } catch (e) {
+    setPreText("logBox", `Fel: ${e.message || e}`);
+  }
+}
+
 async function exportConfig() {
   try {
     const cfg = await apiJson("GET", "/api/config/export");
@@ -384,6 +398,7 @@ function bindUI() {
     await loadStatus();
     await loadAlarms();
     await loadFiles();
+    await loadLogs();
   };
   document.getElementById("btnWifi").onclick = () => { window.location.href = "/wifi"; };
   document.getElementById("btnNewAlarm").onclick = createAlarm;
@@ -455,7 +470,9 @@ async function boot() {
   await loadStatus();
   await loadAlarms();
   await loadFiles();
+  await loadLogs();
   setInterval(loadStatus, 5000);
+  setInterval(loadLogs, 5000);
 }
 
 boot();

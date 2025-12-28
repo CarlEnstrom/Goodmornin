@@ -37,6 +37,8 @@ static time_t lastGoodUnix = 0;
 
 static String deviceId;
 static String adminToken;
+static const size_t MAX_LOG_LINES = 120;
+static std::vector<String> logLines;
 
 struct WebhookLastResult {
   int httpStatus = 0;
@@ -85,6 +87,18 @@ static String isoNow() {
     s = s.substring(0, n - 2) + ":" + s.substring(n - 2);
   }
   return s;
+}
+
+static void addLogLine(const String& msg) {
+  String line;
+  String ts = isoNow();
+  if (ts.length()) line = ts + " " + msg;
+  else line = String(millis()) + "ms " + msg;
+  logLines.push_back(line);
+  if (logLines.size() > MAX_LOG_LINES) {
+    logLines.erase(logLines.begin(), logLines.begin() + (logLines.size() - MAX_LOG_LINES));
+  }
+  Serial.println(line);
 }
 
 static bool startsWithIgnoreCase(const String& s, const char* prefix) {
@@ -568,8 +582,12 @@ static void buttonTick() {
       if (!level) {
         btn.pressStartMs = nowMs;
         btn.longFired = false;
+        addLogLine(String("[button] press start on pin ") + pin);
       } else {
-        if (!btn.longFired) snoozeActiveAlarm("gpio");
+        if (!btn.longFired) {
+          addLogLine(String("[button] release -> snooze alarm ") + alarms[activeAlarmIndex].id);
+          snoozeActiveAlarm("gpio");
+        }
       }
     }
   } else {
@@ -578,6 +596,7 @@ static void buttonTick() {
       if (lp == 0) lp = DEFAULT_LONG_PRESS_MS;
       if (nowMs - btn.pressStartMs >= lp) {
         btn.longFired = true;
+        addLogLine(String("[button] long press -> dismiss alarm ") + alarms[activeAlarmIndex].id);
         stopActiveAlarm("gpio", true);
       }
     }
@@ -787,6 +806,7 @@ static bool applyAlarmFromJson(AlarmConfig& a, JsonObjectConst in, String& err) 
 
 /* API handlers */
 static void handleStatus(AsyncWebServerRequest* req) {
+  addLogLine("[api] GET /api/status");
   JsonDocument doc;
   doc["device_id"] = deviceId;
   doc["fw_version"] = FW_CONFIG_VERSION;
@@ -821,6 +841,7 @@ static void handleStatus(AsyncWebServerRequest* req) {
 }
 
 static void handleGetAlarms(AsyncWebServerRequest* req) {
+  addLogLine("[api] GET /api/alarms");
   JsonDocument doc;
   JsonArray arr = doc.to<JsonArray>();
   for (int i = 0; i < MAX_ALARMS; i++) {
@@ -833,6 +854,7 @@ static void handleGetAlarms(AsyncWebServerRequest* req) {
 }
 
 static void handleGetAlarmById(AsyncWebServerRequest* req, uint32_t id) {
+  addLogLine(String("[api] GET /api/alarms/") + id);
   int idx = findAlarmIndexById(id);
   if (idx < 0) { req->send(404, "application/json", "{\"error\":\"not_found\"}"); return; }
   JsonDocument doc;
@@ -845,6 +867,7 @@ static void handleGetAlarmById(AsyncWebServerRequest* req, uint32_t id) {
 
 static void handlePostAlarm(AsyncWebServerRequest* req) {
   if (!requireAdmin(req)) return;
+  addLogLine("[api] POST /api/alarms");
   withJsonBody(req, [&](JsonDocument& doc) {
     JsonObjectConst in = doc.as<JsonObjectConst>();
 
@@ -889,6 +912,7 @@ static void handlePostAlarm(AsyncWebServerRequest* req) {
 
 static void handlePutAlarm(AsyncWebServerRequest* req, uint32_t id) {
   if (!requireAdmin(req)) return;
+  addLogLine(String("[api] PUT /api/alarms/") + id);
 
   int idx = findAlarmIndexById(id);
   if (idx < 0) { req->send(404, "application/json", "{\"error\":\"not_found\"}"); return; }
@@ -912,6 +936,7 @@ static void handlePutAlarm(AsyncWebServerRequest* req, uint32_t id) {
 
 static void handleDeleteAlarm(AsyncWebServerRequest* req, uint32_t id) {
   if (!requireAdmin(req)) return;
+  addLogLine(String("[api] DELETE /api/alarms/") + id);
 
   int idx = findAlarmIndexById(id);
   if (idx < 0) { req->send(404, "application/json", "{\"error\":\"not_found\"}"); return; }
@@ -924,6 +949,7 @@ static void handleDeleteAlarm(AsyncWebServerRequest* req, uint32_t id) {
 
 static void handleEnableDisable(AsyncWebServerRequest* req, uint32_t id, bool en) {
   if (!requireAdmin(req)) return;
+  addLogLine(String("[api] POST /api/alarms/") + id + (en ? "/enable" : "/disable"));
 
   int idx = findAlarmIndexById(id);
   if (idx < 0) { req->send(404, "application/json", "{\"error\":\"not_found\"}"); return; }
@@ -933,6 +959,7 @@ static void handleEnableDisable(AsyncWebServerRequest* req, uint32_t id, bool en
   alarmRt[idx].next_fire_unix = computeNextFire(alarms[idx], time(nullptr));
 
   String ev = en ? "enabled" : "disabled";
+  addLogLine(String("[alarm] ") + id + " " + ev + " via webgui");
   if (strlen(alarms[idx].on_set_url) > 0) fireOutboundEvent(alarms[idx], ev, "webgui", String(alarms[idx].on_set_url));
 
   req->send(200, "application/json", "{\"ok\":true}");
@@ -940,34 +967,39 @@ static void handleEnableDisable(AsyncWebServerRequest* req, uint32_t id, bool en
 
 static void handleSnoozeDismissFire(AsyncWebServerRequest* req, uint32_t id, const String& action) {
   if (!requireAdmin(req)) return;
+  addLogLine(String("[api] POST /api/alarms/") + id + "/" + action);
 
   int idx = findAlarmIndexById(id);
   if (idx < 0) { req->send(404, "application/json", "{\"error\":\"not_found\"}"); return; }
 
   if (action == "fire") {
+    addLogLine(String("[alarm] ") + id + " fire via webgui");
     fireAlarmNow(idx, "webgui", false);
     req->send(200, "application/json", "{\"ok\":true}");
     return;
   }
 
   if (activeAlarmIndex < 0 || alarms[activeAlarmIndex].id != id) {
+    addLogLine(String("[alarm] ") + id + " action=" + action + " but no active alarm");
     req->send(409, "application/json", "{\"error\":\"not_ringing\"}");
     return;
   }
 
-  if (action == "snooze") { snoozeActiveAlarm("webgui"); req->send(200, "application/json", "{\"ok\":true}"); return; }
-  if (action == "dismiss") { stopActiveAlarm("webgui", true); req->send(200, "application/json", "{\"ok\":true}"); return; }
+  if (action == "snooze") { addLogLine(String("[alarm] ") + id + " snooze via webgui"); snoozeActiveAlarm("webgui"); req->send(200, "application/json", "{\"ok\":true}"); return; }
+  if (action == "dismiss") { addLogLine(String("[alarm] ") + id + " dismiss via webgui"); stopActiveAlarm("webgui", true); req->send(200, "application/json", "{\"ok\":true}"); return; }
 
   req->send(400, "application/json", "{\"error\":\"bad_action\"}");
 }
 
 static void handleTestAudio(AsyncWebServerRequest* req, uint32_t id) {
   if (!requireAdmin(req)) return;
+  addLogLine(String("[api] POST /api/alarms/") + id + "/test_audio");
 
   int idx = findAlarmIndexById(id);
   if (idx < 0) { req->send(404, "application/json", "{\"error\":\"not_found\"}"); return; }
 
   bool ok = playAlarmAudioWithFallback(alarms[idx]);
+  addLogLine(String("[audio] test alarm ") + id + (ok ? " ok" : " failed"));
   JsonDocument doc;
   doc["ok"] = ok;
   doc["last_audio_error"] = lastAudioError;
@@ -1047,6 +1079,14 @@ static void handleConfigExport(AsyncWebServerRequest* req) {
     o["inbound_webhook_token"] = alarms[i].inbound_token;
   }
 
+  String out; serializeJson(doc, out);
+  req->send(200, "application/json", out);
+}
+
+static void handleLogs(AsyncWebServerRequest* req) {
+  JsonDocument doc;
+  JsonArray arr = doc.to<JsonArray>();
+  for (const auto& line : logLines) arr.add(line);
   String out; serializeJson(doc, out);
   req->send(200, "application/json", out);
 }
@@ -1292,11 +1332,12 @@ server.on("/app.js", HTTP_GET, [](AsyncWebServerRequest* req) {
 
 
   // API
-  server.on("/api/status", HTTP_GET, handleStatus);
-  server.on("/api/alarms", HTTP_GET, handleGetAlarms);
+  server.on(AsyncURIMatcher::exact("/api/status"), HTTP_GET, handleStatus);
+  // Exact-match för /api/alarms så att dynamiska routes /api/alarms/{id}/... inte hamnar här
+  server.on(AsyncURIMatcher::exact("/api/alarms"), HTTP_GET, handleGetAlarms);
 
   // VIKTIGT: POST /api/alarms med body-callback (annars missing_body)
-  server.on("/api/alarms", HTTP_POST,
+  server.on(AsyncURIMatcher::exact("/api/alarms"), HTTP_POST,
     [](AsyncWebServerRequest* req) {
       // Tom avsiktligt. Vi svarar när bodyn är komplett i body-callbacken nedan.
     },
@@ -1387,6 +1428,7 @@ server.on("/app.js", HTTP_GET, [](AsyncWebServerRequest* req) {
   );
 
   server.on("/api/system/restart", HTTP_POST, handleRestart);
+  server.on("/api/logs", HTTP_GET, handleLogs);
 
   // Dynamiska alarm-routes (/api/alarms/{id}/...)
   class AlarmRouteHandler : public AsyncWebHandler {
@@ -1435,12 +1477,13 @@ server.on("/app.js", HTTP_GET, [](AsyncWebServerRequest* req) {
 
   server.onNotFound([](AsyncWebServerRequest* req) {
     String path = req->url();
-    Serial.printf("[onNotFound] %s %s\n", req->method() == HTTP_GET ? "GET" :
-                                       req->method() == HTTP_POST ? "POST" :
-                                       req->method() == HTTP_PUT ? "PUT" :
-                                       req->method() == HTTP_DELETE ? "DELETE" :
-                                       req->method() == HTTP_OPTIONS ? "OPTIONS" : "OTHER",
-                                       path.c_str());
+    const char* method = req->method() == HTTP_GET ? "GET" :
+                         req->method() == HTTP_POST ? "POST" :
+                         req->method() == HTTP_PUT ? "PUT" :
+                         req->method() == HTTP_DELETE ? "DELETE" :
+                         req->method() == HTTP_OPTIONS ? "OPTIONS" : "OTHER";
+    Serial.printf("[onNotFound] %s %s\n", method, path.c_str());
+    addLogLine(String("[http] not found ") + method + " " + path);
 
     // En enkel CORS/OPTIONS-svar för alla vägar
     if (req->method() == HTTP_OPTIONS) {
@@ -1506,12 +1549,12 @@ server.on("/app.js", HTTP_GET, [](AsyncWebServerRequest* req) {
 void setup() {
   Serial.begin(115200);
   delay(150);
-  Serial.println("\n[boot] starting");
+  addLogLine("[boot] starting");
 
   deviceId = "esp32c3-" + chipIdHex().substring(0, 12);
 
   if (!LittleFS.begin(false)) {
-    Serial.println("LittleFS mount failed");
+    addLogLine("[boot] LittleFS mount failed");
   }
 
   prefs.begin("alarmclk", false);
@@ -1527,7 +1570,7 @@ void setup() {
   startWiFiFlow();
 
   if (wifiConnected) {
-    Serial.printf("[boot] WiFi STA connected IP=%s\n", WiFi.localIP().toString().c_str());
+    addLogLine(String("[boot] WiFi STA connected IP=") + WiFi.localIP().toString());
     startNtp();
 
     // Vänta in första synken lite mer robust än 200ms
@@ -1553,15 +1596,15 @@ void setup() {
   } else {
     // AP mode: time may be invalid, but UI+API still works
     ntpSynced = false;
-    Serial.println("[boot] WiFi AP mode");
+    addLogLine("[boot] WiFi AP mode");
   }
 
   setupServer();
-  Serial.println("[boot] server ready");
+  addLogLine("[boot] server ready");
 
-  Serial.printf("Device: %s\n", deviceId.c_str());
-  Serial.printf("Admin token set: %s\n", adminToken.length() ? "yes" : "no");
-  Serial.println("[boot] ready");
+  addLogLine(String("Device: ") + deviceId);
+  addLogLine(String("Admin token set: ") + (adminToken.length() ? "yes" : "no"));
+  addLogLine("[boot] ready");
 }
 
 void loop() {
@@ -1577,6 +1620,14 @@ void loop() {
   buttonTick();
   audio.loop();
   processWebhookQueue();
+
+  // Periodic heartbeat on Serial to confirm runtime logging works beyond boot
+  static uint32_t lastTickMs = 0;
+  uint32_t now = millis();
+  if (now - lastTickMs > 2000) {
+    Serial.printf("loop tick %lu\n", (unsigned long)(now / 1000));
+    lastTickMs = now;
+  }
 
   delay(5);
 }

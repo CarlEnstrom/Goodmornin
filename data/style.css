@@ -94,6 +94,19 @@ input:focus, select:focus, textarea:focus { border-color: rgba(77,163,255,.5); }
   box-shadow: 0 6px 16px var(--shadow);
 }
 
+.log-box {
+  background: var(--panel2);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 12px;
+  margin-top: 10px;
+  max-height: 220px;
+  overflow: auto;
+  font-size: 12px;
+  line-height: 1.4;
+  white-space: pre-wrap;
+}
+
 .grid2 {
   display: grid;
   grid-template-columns: 1fr;
